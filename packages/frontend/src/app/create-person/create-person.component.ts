@@ -1,5 +1,5 @@
 import { Component, OnInit } from '@angular/core';
-import { FormControl } from '@angular/forms';
+import { UntypedFormControl } from '@angular/forms';
 import { map } from 'rxjs';
 import { PersonService } from '../person.service';
 
@@ -12,8 +12,8 @@ export class CreatePersonComponent {
 
   constructor(private personService: PersonService) { }
 
-  nameControl = new FormControl("");
-  pictureControl = new FormControl("");
+  nameControl = new UntypedFormControl("");
+  pictureControl = new UntypedFormControl("");
 
   isValidForm = this.nameControl.valueChanges.pipe(map(value => value?.length > 3));
 

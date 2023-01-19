@@ -1,5 +1,5 @@
 import { Component, Input } from '@angular/core';
-import { FormControl } from '@angular/forms';
+import { UntypedFormControl } from '@angular/forms';
 import { map } from 'rxjs';
 import { Person } from '../models/person';
 import { StarService } from '../star.service';
@@ -14,7 +14,7 @@ export class PersonListItemComponent {
   @Input()
   person: Person | undefined;
 
-  textField = new FormControl("");
+  textField = new UntypedFormControl("");
 
   canSubmit$ = this.textField.valueChanges.pipe(map(value => value?.length > 3));
 
