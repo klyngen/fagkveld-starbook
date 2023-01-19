@@ -2,16 +2,20 @@ package presentation
 
 import (
 	"context"
+	"crypto/rsa"
 	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
+	"github.com/golang-jwt/jwt"
+	"github.com/klyngen/fagkveld-starbook/packages/backend/starbook-auth/repository"
 	oidcdiscovery "github.com/klyngen/golang-oidc-discovery"
-	"github.com/klyngen/packages/backend/starbook-auth/repository"
 )
 
 const userIdKey = "userId"
@@ -26,12 +30,18 @@ type AuthenticationConfig struct {
 type api struct {
 	repository *repository.Repository
 	router     *chi.Mux
+	publicKeys []oidcdiscovery.PublicKey
 }
 
 func NewApi(repository *repository.Repository, config AuthenticationConfig) *api {
+	keys, _ := getPublicKeys(config)
 	router := chi.NewRouter()
+	api := api{
+		repository: repository,
+		publicKeys: keys,
+	}
 	router.Use(middleware.Logger)
-	router.Use(authenticationMiddleware)
+	router.Use(api.authenticationMiddleware)
 	router.Use(cors.Handler(cors.Options{
 		AllowedOrigins: []string{"https://*", "http://*"},
 		// AllowOriginFunc:  func(r *http.Request, origin string) bool { return true },
@@ -41,10 +51,6 @@ func NewApi(repository *repository.Repository, config AuthenticationConfig) *api
 		AllowCredentials: false,
 		MaxAge:           300, // Maximum value not ignored by any of major browsers
 	}))
-
-	api := api{
-		repository: repository,
-	}
 
 	router.Route("/person", func(r chi.Router) {
 		r.Get("/", api.handleGetPersons)
@@ -76,10 +82,52 @@ func getPublicKeys(config AuthenticationConfig) ([]oidcdiscovery.PublicKey, erro
 	return client.GetCertificates()
 }
 
-func authenticationMiddleware(next http.Handler) http.Handler {
+func (a *api) authenticationMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(
 		func(w http.ResponseWriter, r *http.Request) {
-			context := context.WithValue(r.Context(), userIdKey, "klingen")
+
+			rawToken := r.Header.Get("Authorization")
+
+			bearerTokenArray := strings.Split(rawToken, " ")
+			if len(bearerTokenArray) < 2 {
+				w.WriteHeader(http.StatusUnauthorized)
+				return
+			}
+
+			if len(bearerTokenArray[1]) == 0 {
+				w.WriteHeader(http.StatusUnauthorized)
+				return
+			}
+
+			token, err := jwt.Parse(bearerTokenArray[1], func(token *jwt.Token) (interface{}, error) {
+				return a.getPublicKey(token)
+			})
+
+			if err != nil {
+				w.WriteHeader(http.StatusUnauthorized)
+				return
+			}
+
+			var expiration time.Time
+			switch iat := token.Claims.(jwt.MapClaims)["exp"].(type) {
+			case float64:
+				expiration = time.Unix(int64(iat), 0)
+			case json.Number:
+				v, _ := iat.Int64()
+				expiration = time.Unix(v, 0)
+			default:
+				return
+			}
+
+			if expiration.Before(time.Now()) {
+				w.WriteHeader(http.StatusForbidden)
+			}
+
+			rawClaims := token.Claims.(jwt.MapClaims)
+
+			sub := rawClaims["sub"].(string)
+
+			context := context.WithValue(r.Context(), userIdKey, sub)
 			next.ServeHTTP(w, r.WithContext(context))
 		})
 }
@@ -174,4 +222,20 @@ func (a *api) handlePostStar(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	encoder := json.NewEncoder(w)
 	encoder.Encode(&star)
+}
+
+func (s *api) getPublicKey(token *jwt.Token) (*rsa.PublicKey, error) {
+	cert := ""
+
+	for _, key := range s.publicKeys {
+		if token.Header["kid"] == key.Kid {
+			cert = key.GetCertificate()
+		}
+	}
+
+	if cert == "" {
+		return nil, nil
+	}
+
+	return jwt.ParseRSAPublicKeyFromPEM([]byte(cert))
 }

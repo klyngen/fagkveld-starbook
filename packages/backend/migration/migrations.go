@@ -25,6 +25,12 @@ var migrations = []migrator.Migration{
 			FOREIGN KEY (person_id) REFERENCES person(id));
 		`,
 	},
+
+	{
+		Name:        "Column change",
+		Description: "",
+		Script:      `ALTER TABLE person ALTER COLUMN image TYPE VARCHAR(1000);`,
+	},
 }
 
 func MigrateDatabase(db *sql.DB) error {
